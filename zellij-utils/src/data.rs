@@ -1802,6 +1802,9 @@ impl ModeInfo {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SessionInfo {
     pub name: String,
+    /// The name this session was originally created with, before any renames. Kept around so
+    /// UIs (eg. the session manager) can still show it alongside a user-chosen name.
+    pub created_name: String,
     pub tabs: Vec<TabInfo>,
     pub panes: PaneManifest,
     pub connected_clients: usize,
@@ -2228,6 +2231,7 @@ impl Hash for SessionInfo {
 impl SessionInfo {
     pub fn new(name: String) -> Self {
         SessionInfo {
+            created_name: name.clone(),
             name,
             ..Default::default()
         }

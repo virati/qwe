@@ -607,6 +607,7 @@ pub enum ServerContext {
     Log,
     LogError,
     SwitchSession,
+    SwitchSessionAndKillCurrentSession,
     UnblockCliPipeInput,
     CliPipeOutput,
     AssociatePipeWithClient,

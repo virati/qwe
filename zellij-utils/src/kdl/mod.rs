@@ -54,6 +54,7 @@ macro_rules! parse_kdl_action_arguments {
                 "FocusHostSession" => Ok(Action::FocusHostSession),
                 "FocusGuestSession" => Ok(Action::FocusGuestSession),
                 "ToggleHostFullscreen" => Ok(Action::ToggleHostFullscreen),
+                "CloseSessionAndSwitchToNext" => Ok(Action::CloseSessionAndSwitchToNext),
                 "SwitchFocus" => Ok(Action::SwitchFocus),
                 "EditScrollback" => Ok(Action::EditScrollback { ansi: false }),
                 "ScrollUp" => Ok(Action::ScrollUp),
@@ -1358,6 +1359,9 @@ impl Action {
             Action::FocusHostSession => Some(KdlNode::new("FocusHostSession")),
             Action::FocusGuestSession => Some(KdlNode::new("FocusGuestSession")),
             Action::ToggleHostFullscreen => Some(KdlNode::new("ToggleHostFullscreen")),
+            Action::CloseSessionAndSwitchToNext => {
+                Some(KdlNode::new("CloseSessionAndSwitchToNext"))
+            },
             _ => None,
         }
     }
@@ -1556,6 +1560,9 @@ impl TryFrom<(&KdlNode, &Options)> for Action {
                 parse_kdl_action_arguments!(action_name, action_arguments, kdl_action)
             },
             "ToggleHostFullscreen" => {
+                parse_kdl_action_arguments!(action_name, action_arguments, kdl_action)
+            },
+            "CloseSessionAndSwitchToNext" => {
                 parse_kdl_action_arguments!(action_name, action_arguments, kdl_action)
             },
             "SwitchFocus" => parse_kdl_action_arguments!(action_name, action_arguments, kdl_action),
@@ -5957,6 +5964,12 @@ impl SessionInfo {
             .and_then(|e| e.value().as_string())
             .map(|s| s.to_owned())
             .ok_or("Failed to parse session name")?;
+        let created_name = kdl_document
+            .get("created_name")
+            .and_then(|n| n.entries().iter().next())
+            .and_then(|e| e.value().as_string())
+            .map(|s| s.to_owned())
+            .unwrap_or_else(|| name.clone()); // older cache files won't have this field
         let connected_clients = kdl_document
             .get("connected_clients")
             .and_then(|n| n.entries().iter().next())
@@ -6095,6 +6108,7 @@ impl SessionInfo {
             .unwrap_or_default();
         Ok(SessionInfo {
             name,
+            created_name,
             tabs,
             panes,
             connected_clients,
@@ -6113,6 +6127,9 @@ impl SessionInfo {
 
         let mut name = KdlNode::new("name");
         name.push(self.name.clone());
+
+        let mut created_name = KdlNode::new("created_name");
+        created_name.push(self.created_name.clone());
 
         let mut connected_clients = KdlNode::new("connected_clients");
         connected_clients.push(self.connected_clients as i64);
@@ -6200,6 +6217,7 @@ impl SessionInfo {
         pane_history.set_children(pane_history_children);
 
         kdl_document.nodes_mut().push(name);
+        kdl_document.nodes_mut().push(created_name);
         kdl_document.nodes_mut().push(tabs);
         kdl_document.nodes_mut().push(panes);
         kdl_document.nodes_mut().push(connected_clients);
@@ -6735,6 +6753,7 @@ fn serialize_and_deserialize_session_info_with_data() {
     panes.insert(0, panes_list);
     let session_info = SessionInfo {
         name: "my session name".to_owned(),
+        created_name: "my session name".to_owned(),
         tabs: vec![
             TabInfo {
                 position: 0,

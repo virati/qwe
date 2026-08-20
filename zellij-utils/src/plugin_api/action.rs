@@ -2021,6 +2021,7 @@ impl TryFrom<Action> for ProtobufAction {
             | Action::SetPaneBorderless { .. }
             | Action::SkipConfirm { action: _ }
             | Action::SwitchSession { .. }
+            | Action::CloseSessionAndSwitchToNext
             | Action::SaveSession
             | Action::ListTabs { .. }
             | Action::CurrentTabInfo { .. }

@@ -225,6 +225,7 @@ impl SessionList {
 #[derive(Debug, Clone)]
 pub struct SessionUiInfo {
     pub name: String,
+    pub created_name: String,
     pub tabs: Vec<TabUiInfo>,
     pub connected_users: usize,
     pub is_current_session: bool,
@@ -235,6 +236,7 @@ impl SessionUiInfo {
     pub fn from_session_info(session_info: &SessionInfo) -> Self {
         SessionUiInfo {
             name: session_info.name.clone(),
+            created_name: session_info.created_name.clone(),
             tabs: session_info
                 .tabs
                 .iter()

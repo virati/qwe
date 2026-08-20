@@ -1521,6 +1521,8 @@ pub(crate) struct Screen {
     copy_options: CopyOptions,
     debug: bool,
     session_name: String,
+    created_session_name: String, // the name this session was originally created with, never
+    // mutated by a rename - kept so UIs can show it alongside a user-chosen name
     peer_sessions_cache: BTreeMap<String, SessionInfo>, // String is the session name, can
     // also be this session
     resurrectable_sessions_cache: BTreeMap<String, Duration>, // String is the session name,
@@ -1682,6 +1684,7 @@ impl Screen {
         nested_session_handling: NestedSessionHandling,
     ) -> Self {
         let session_name = mode_info.session_name.clone().unwrap_or_default();
+        let created_session_name = session_name.clone();
         let session_info = SessionInfo::new(session_name.clone());
         let mut peer_sessions_cache = BTreeMap::new();
         let resurrectable_sessions_cache = BTreeMap::new();
@@ -1718,6 +1721,7 @@ impl Screen {
             copy_options,
             debug,
             session_name,
+            created_session_name,
             peer_sessions_cache,
             default_layout,
             default_layout_name,
@@ -5334,6 +5338,7 @@ impl Screen {
         };
         let session_info = SessionInfo {
             name: self.session_name.clone(),
+            created_name: self.created_session_name.clone(),
             tabs: tab_infos,
             panes: pane_manifest,
             connected_clients: self.active_tab_ids.keys().len(),
@@ -11156,6 +11161,7 @@ pub(crate) fn screen_thread_main(
                 };
                 let session_info = SessionInfo {
                     name: screen.session_name.clone(),
+                    created_name: screen.created_session_name.clone(),
                     tabs: tab_infos,
                     panes: pane_manifest,
                     connected_clients: screen.active_tab_ids.keys().len(),

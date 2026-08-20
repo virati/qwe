@@ -511,6 +511,9 @@ pub enum Action {
     FocusHostSession,
     FocusGuestSession,
     ToggleHostFullscreen,
+    /// Kill the current session outright and switch to the next session (alphabetically,
+    /// excluding this one). If no other session exists, this behaves like `Quit`.
+    CloseSessionAndSwitchToNext,
     RenameSession {
         name: String,
     },

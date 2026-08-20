@@ -1240,6 +1240,7 @@ impl TryFrom<SessionInfo> for ProtobufSessionManifest {
         }
         Ok(ProtobufSessionManifest {
             name: session_info.name,
+            created_name: session_info.created_name,
             panes: protobuf_pane_manifests,
             tabs: session_info
                 .tabs
@@ -1363,6 +1364,7 @@ impl TryFrom<ProtobufSessionManifest> for SessionInfo {
         }
         Ok(SessionInfo {
             name: protobuf_session_manifest.name,
+            created_name: protobuf_session_manifest.created_name,
             tabs: protobuf_session_manifest
                 .tabs
                 .iter()
@@ -3004,6 +3006,7 @@ fn serialize_session_update_event_with_non_default_values() {
     tab_history.insert(2, vec![1, 2, 3]);
     let session_info_1 = SessionInfo {
         name: "session 1".to_owned(),
+        created_name: "session 1".to_owned(),
         tabs: tab_infos,
         panes: PaneManifest { panes },
         connected_clients: 2,
@@ -3036,6 +3039,7 @@ fn serialize_session_update_event_with_non_default_values() {
     };
     let session_info_2 = SessionInfo {
         name: "session 2".to_owned(),
+        created_name: "session 2".to_owned(),
         tabs: vec![],
         panes: PaneManifest {
             panes: HashMap::new(),

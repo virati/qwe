@@ -285,6 +285,7 @@ message Action {
     FocusHostSessionAction focus_host_session = 145;
     ToggleHostFullscreenAction toggle_host_fullscreen = 146;
     FocusGuestSessionAction focus_guest_session = 147;
+    CloseSessionAndSwitchToNextAction close_session_and_switch_to_next = 148;
   }
 }
 
@@ -296,6 +297,7 @@ message FocusNextPaneAction {}
 message FocusPreviousPaneAction {}
 message FocusLastPaneAction {}
 message FocusHostSessionAction {}
+message CloseSessionAndSwitchToNextAction {}
 message FocusGuestSessionAction {}
 message ToggleHostFullscreenAction {}
 message SwitchFocusAction {}

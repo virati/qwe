@@ -647,6 +647,19 @@ pub fn build_session_ui_line(session_ui_info: &SessionUiInfo, colors: Colors) ->
         session_name.clone(),
         SpanStyle::ForegroundBold(colors.palette.text_unselected.emphasis_0),
     ));
+    let created_name = &session_ui_info.created_name;
+    let auto_name_span = if !created_name.is_empty() && created_name != session_name {
+        let dim_created_name = colors.dim(created_name);
+        Some(UiSpan::UiSpanTelescope(UiSpanTelescope::new(vec![
+            StringAndLength::new(
+                format!(" ({dim_created_name})"),
+                2 + created_name.width() + 1,
+            ),
+            StringAndLength::new(String::new(), 0),
+        ])))
+    } else {
+        None
+    };
     let tab_and_pane_count = UiSpan::UiSpanTelescope(UiSpanTelescope::new(vec![
         StringAndLength::new(
             format!(" ({tab_count_styled} tabs, {total_pane_count_styled} panes)"),
@@ -669,6 +682,9 @@ pub fn build_session_ui_line(session_ui_info: &SessionUiInfo, colors: Colors) ->
     ]));
     ui_spans.push(session_bullet_span);
     ui_spans.push(session_name_span);
+    if let Some(auto_name_span) = auto_name_span {
+        ui_spans.push(auto_name_span);
+    }
     ui_spans.push(tab_and_pane_count);
     ui_spans.push(connected_users_count);
     if session_ui_info.is_current_session {
@@ -1687,6 +1703,10 @@ impl Colors {
 
     pub fn tab_count(&self, text: &str) -> String {
         self.color(&self.palette.text_unselected.emphasis_1, text)
+    }
+
+    pub fn dim(&self, text: &str) -> String {
+        self.color(&self.palette.text_unselected.base, text)
     }
 
     pub fn shortcuts(&self, text: &str) -> String {

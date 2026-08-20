@@ -29,6 +29,7 @@ use zellij_utils::{
         command::TerminalAction,
     },
     ipc::{ClientToServerMsg, ExitReason, IpcReceiverWithContext, ServerToClientMsg},
+    sessions::get_sessions,
 };
 
 use crate::ClientId;
@@ -1207,6 +1208,41 @@ pub(crate) fn route_action(
                 should_break = true;
             } else {
                 drop(completion_tx); // no need to wait, this is a no-op
+            }
+        },
+        Action::CloseSessionAndSwitchToNext => {
+            let current_session_name = envs::get_session_name().unwrap_or_else(|_| String::new());
+            let next_session_name = get_sessions().ok().and_then(|mut sessions| {
+                sessions.retain(|(name, _)| name != &current_session_name);
+                sessions.sort_by(|a, b| a.0.cmp(&b.0));
+                sessions.into_iter().next().map(|(name, _)| name)
+            });
+            match next_session_name {
+                Some(name) => {
+                    let connect_to_session = ConnectToSession {
+                        name: Some(name),
+                        tab_position: None,
+                        pane_id: None,
+                        layout: None,
+                        cwd: None,
+                    };
+                    senders
+                        .send_to_server(ServerInstruction::SwitchSessionAndKillCurrentSession(
+                            connect_to_session,
+                            client_id,
+                            Some(NotificationEnd::new(completion_tx)),
+                        ))
+                        .with_context(err_context)?;
+                    should_break = true;
+                },
+                None => {
+                    // no other session to switch to - fall back to a plain quit
+                    drop(completion_tx);
+                    senders
+                        .send_to_server(ServerInstruction::KillSession)
+                        .with_context(err_context)?;
+                    should_break = true;
+                },
             }
         },
         Action::MouseEvent { event } => {

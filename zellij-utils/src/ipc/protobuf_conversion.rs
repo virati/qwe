@@ -1136,6 +1136,7 @@ impl From<crate::input::actions::Action>
             CloseFocusAction,
             CloseFocusByPaneIdAction,
             ClosePluginPaneAction,
+            CloseSessionAndSwitchToNextAction,
             CloseTabAction,
             CloseTabByIdAction,
             CloseTerminalPaneAction,
@@ -1342,6 +1343,9 @@ impl From<crate::input::actions::Action>
             },
             crate::input::actions::Action::ToggleHostFullscreen => {
                 ActionType::ToggleHostFullscreen(ToggleHostFullscreenAction {})
+            },
+            crate::input::actions::Action::CloseSessionAndSwitchToNext => {
+                ActionType::CloseSessionAndSwitchToNext(CloseSessionAndSwitchToNextAction {})
             },
             crate::input::actions::Action::SwitchFocus => {
                 ActionType::SwitchFocus(SwitchFocusAction {})
@@ -2796,6 +2800,9 @@ impl TryFrom<crate::client_server_contract::client_server_contract::Action>
             },
             ActionType::ToggleHostFullscreen(_) => {
                 Ok(crate::input::actions::Action::ToggleHostFullscreen)
+            },
+            ActionType::CloseSessionAndSwitchToNext(_) => {
+                Ok(crate::input::actions::Action::CloseSessionAndSwitchToNext)
             },
             ActionType::RenameSession(rename_session_action) => {
                 Ok(crate::input::actions::Action::RenameSession {

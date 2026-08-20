@@ -108,6 +108,7 @@ pub enum ServerInstruction {
     Log(Vec<String>, ClientId, Option<NotificationEnd>),
     LogError(Vec<String>, ClientId, Option<NotificationEnd>),
     SwitchSession(ConnectToSession, ClientId, Option<NotificationEnd>),
+    SwitchSessionAndKillCurrentSession(ConnectToSession, ClientId, Option<NotificationEnd>),
     UnblockCliPipeInput(String),   // String -> Pipe name
     CliPipeOutput(String, String), // String -> Pipe name, String -> Output
     AssociatePipeWithClient {
@@ -161,6 +162,9 @@ impl From<&ServerInstruction> for ServerContext {
             ServerInstruction::Log(..) => ServerContext::Log,
             ServerInstruction::LogError(..) => ServerContext::LogError,
             ServerInstruction::SwitchSession(..) => ServerContext::SwitchSession,
+            ServerInstruction::SwitchSessionAndKillCurrentSession(..) => {
+                ServerContext::SwitchSessionAndKillCurrentSession
+            },
             ServerInstruction::UnblockCliPipeInput(..) => ServerContext::UnblockCliPipeInput,
             ServerInstruction::CliPipeOutput(..) => ServerContext::CliPipeOutput,
             ServerInstruction::AssociatePipeWithClient { .. } => {
@@ -1682,6 +1686,72 @@ pub fn start_server_impl(
                         .senders
                         .send_to_plugin(PluginInstruction::RemoveClient(client_id))
                         .unwrap();
+                }
+            },
+            ServerInstruction::SwitchSessionAndKillCurrentSession(
+                mut connect_to_session,
+                client_id,
+                completion_tx,
+            ) => {
+                let current_session_name = envs::get_session_name();
+                if connect_to_session.name == current_session_name.ok() {
+                    log::error!("Cannot attach to same session");
+                    drop(completion_tx);
+                } else {
+                    let layout_dir = session_data
+                        .read()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .session_configuration
+                        .get_client_configuration(&client_id)
+                        .options
+                        .layout_dir
+                        .or_else(|| default_layout_dir());
+                    if let Some(layout_dir) = layout_dir {
+                        connect_to_session.apply_layout_dir(&layout_dir);
+                    }
+
+                    send_to_client!(
+                        client_id,
+                        os_input,
+                        ServerToClientMsg::SwitchSession { connect_to_session },
+                        session_state,
+                        session_data
+                    );
+                    remove_client!(client_id, os_input, session_state, session_data);
+                    drop(completion_tx); // do not deadlock with route thread
+
+                    session_data
+                        .write()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .senders
+                        .send_to_screen(ScreenInstruction::RemoveClient(client_id))
+                        .unwrap();
+                    session_data
+                        .write()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .senders
+                        .send_to_plugin(PluginInstruction::RemoveClient(client_id))
+                        .unwrap();
+
+                    // this session is being closed outright (not just detached) - exit any
+                    // other clients still attached and shut this session's server down
+                    let remaining_client_ids = session_state.read().unwrap().client_ids();
+                    for remaining_client_id in remaining_client_ids {
+                        let _ = os_input.send_to_client(
+                            remaining_client_id,
+                            ServerToClientMsg::Exit {
+                                exit_reason: ExitReason::Normal,
+                            },
+                        );
+                        remove_client!(remaining_client_id, os_input, session_state, session_data);
+                    }
+                    break;
                 }
             },
             ServerInstruction::AssociatePipeWithClient { pipe_id, client_id } => {
