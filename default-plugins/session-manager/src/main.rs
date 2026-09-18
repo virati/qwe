@@ -15,6 +15,7 @@ use ui::{
         render_renaming_session_screen, render_screen_toggle, render_single_screen_prompt,
         render_unified_results, render_unsaved_changes_line, Colors,
     },
+    preview::{preview_panel_width, render_session_preview, SessionPreviewState},
     welcome_screen::{render_banner, render_welcome_boundaries},
     SessionUiInfo,
 };
@@ -56,6 +57,9 @@ pub(crate) struct State {
     current_session_last_saved_time: Option<u64>,
     is_visible: bool,
     refresh_timer_armed: bool,
+    /// The preview of the session currently under the cursor, shown in the panel to the right
+    /// of the session list
+    session_preview: SessionPreviewState,
 }
 
 register_plugin!(State);
@@ -196,6 +200,9 @@ impl ZellijPlugin for State {
             },
             _ => (),
         };
+        if should_render {
+            self.refresh_session_preview();
+        }
         should_render
     }
 
@@ -235,15 +242,29 @@ impl ZellijPlugin for State {
                 } else if self.show_kill_all_sessions_warning {
                     self.render_kill_all_sessions_warning(height, width, x, y);
                 } else {
+                    let preview_width = self.preview_panel_width(width);
+                    let list_width = width.saturating_sub(preview_width);
                     render_prompt(&self.search_term, self.colors, x, y + 2);
                     let bottom_lines = 7;
                     let room_for_list = height.saturating_sub(bottom_lines);
                     self.sessions.update_rows(room_for_list);
-                    let list =
-                        self.sessions
-                            .render(room_for_list, width.saturating_sub(7), self.colors); // 7 for various ui
+                    let list = self.sessions.render(
+                        room_for_list,
+                        list_width.saturating_sub(7),
+                        self.colors,
+                    ); // 7 for various ui
                     for (i, line) in list.iter().enumerate() {
                         print!("\u{1b}[{};{}H{}", y + i + 5, x, line.render());
+                    }
+                    if preview_width > 0 {
+                        render_session_preview(
+                            &self.session_preview,
+                            self.colors,
+                            x + list_width,
+                            y + 4,
+                            preview_width,
+                            room_for_list,
+                        );
                     }
                 }
             },
@@ -266,10 +287,14 @@ impl ZellijPlugin for State {
                             let available = height.saturating_sub(3);
                             let y_offset = y + available.saturating_sub(content_height) / 2;
 
-                            // Horizontal centering: cap content block and center
+                            // Horizontal centering: cap the content block, reserve room for
+                            // the preview panel to its right, and center the two together
                             // within the full pane width
-                            let content_width = std::cmp::min(width, 90);
-                            let x_centered = x + (width.saturating_sub(content_width)) / 2;
+                            let preview_width = self.preview_panel_width(width);
+                            let content_width =
+                                std::cmp::min(width.saturating_sub(preview_width), 90);
+                            let x_centered =
+                                x + (width.saturating_sub(content_width + preview_width)) / 2;
 
                             let enter_action = if !self.single_screen_state.search_term.is_empty() {
                                 if let Some(result) = self.single_screen_state.get_selected_result()
@@ -309,6 +334,16 @@ impl ZellijPlugin for State {
                                 x_centered,
                                 y_offset + 2,
                             );
+                            if preview_width > 0 {
+                                render_session_preview(
+                                    &self.session_preview,
+                                    self.colors,
+                                    x_centered + content_width,
+                                    y_offset,
+                                    preview_width,
+                                    content_height,
+                                );
+                            }
                         }
                     },
                     SingleScreenMode::SelectingLayout => {
@@ -405,8 +440,9 @@ impl ZellijPlugin for State {
             && !self.is_welcome_screen
         {
             let help_x = if self.active_screen == ActiveScreen::SingleScreen {
-                let content_width = std::cmp::min(width, 90);
-                x + (width.saturating_sub(content_width)) / 2
+                let preview_width = self.preview_panel_width(width);
+                let content_width = std::cmp::min(width.saturating_sub(preview_width), 90);
+                x + (width.saturating_sub(content_width + preview_width)) / 2
             } else {
                 x
             };
@@ -1256,6 +1292,54 @@ impl State {
                 }
             },
         }
+    }
+    /// How many columns the preview panel gets on a screen this wide, or 0 if it should not be
+    /// shown at all. The welcome screen is deliberately left alone: it is a fixed-width,
+    /// centered layout with a banner above it and has no room for a second column.
+    fn preview_panel_width(&self, width: usize) -> usize {
+        if self.is_welcome_screen {
+            0
+        } else {
+            preview_panel_width(width)
+        }
+    }
+    /// Reads the preview of whichever session is currently under the cursor. Previews are
+    /// published to disk by each running session about once per second, so this is a cheap
+    /// file read rather than a query to the other session.
+    fn refresh_session_preview(&mut self) {
+        let selected_session: Option<(String, bool)> = match self.active_screen {
+            ActiveScreen::SingleScreen => {
+                self.single_screen_state
+                    .get_selected_result()
+                    .map(|result| match result {
+                        UnifiedSearchResult::ActiveSession { session_name, .. } => {
+                            (session_name.clone(), true)
+                        },
+                        UnifiedSearchResult::ResurrectableSession { session_name, .. } => {
+                            (session_name.clone(), false)
+                        },
+                    })
+            },
+            ActiveScreen::AttachToSession => self
+                .sessions
+                .get_selected_session_name()
+                .map(|session_name| (session_name, true)),
+            ActiveScreen::NewSession | ActiveScreen::ResurrectSession => None,
+        };
+        self.session_preview = match selected_session {
+            None => SessionPreviewState::NoSelection,
+            Some((session_name, false)) => SessionPreviewState::NotRunning { session_name },
+            Some((session_name, true)) => match get_session_preview(&session_name) {
+                Ok(preview) => SessionPreviewState::Loaded {
+                    session_name,
+                    preview,
+                },
+                Err(reason) => SessionPreviewState::Unavailable {
+                    session_name,
+                    reason,
+                },
+            },
+        };
     }
     fn toggle_active_screen(&mut self) {
         self.active_screen = match self.active_screen {

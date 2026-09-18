@@ -218,6 +218,7 @@ enum CommandName {
   NewPane = 226;
   ToggleFocusNoUiFullscreen = 227;
   FocusHostSession = 228;
+  GetSessionPreview = 229;
 }
 
 message PluginCommand {
@@ -378,6 +379,7 @@ message PluginCommand {
     NewTiledPaneInTabPayload new_tiled_pane_in_tab_payload = 169;
     SetPaneFrameStylePayload set_pane_frame_style_payload = 170;
     ToggleFloatingPanesPayload toggle_floating_panes_payload = 171;
+    GetSessionPreviewPayload get_session_preview_payload = 172;
   }
 }
 
@@ -1358,6 +1360,27 @@ message SessionListSnapshot {
 message GetSessionListResponse {
   oneof result {
     SessionListSnapshot snapshot = 1;
+    string error = 2;
+  }
+}
+
+message GetSessionPreviewPayload {
+  string session_name = 1;
+}
+
+message SessionPreviewPane {
+  string title = 1;
+  repeated string lines = 2;
+}
+
+message SessionPreview {
+  string tab_name = 1;
+  repeated SessionPreviewPane panes = 2;
+}
+
+message GetSessionPreviewResponse {
+  oneof result {
+    SessionPreview preview = 1;
     string error = 2;
   }
 }

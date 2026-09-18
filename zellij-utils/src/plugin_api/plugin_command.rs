@@ -12,11 +12,11 @@ pub use super::generated_api::api::{
         break_panes_to_tab_with_index_response, delete_layout_response, dump_layout_response,
         dump_session_layout_response, edit_layout_response, focus_or_create_tab_response,
         get_focused_pane_info_response, get_pane_cwd_response, get_pane_pid_response,
-        get_pane_running_command_response, get_session_list_response, hide_floating_panes_response,
-        highlight_style::Style as ProtobufHighlightStyleVariant, new_tab_response,
-        new_tab_unfocused_response, parse_layout_response, plugin_command::Payload,
-        rename_layout_response, save_layout_response, save_session_response,
-        show_floating_panes_response, BreakPanesToNewTabPayload,
+        get_pane_running_command_response, get_session_list_response, get_session_preview_response,
+        hide_floating_panes_response, highlight_style::Style as ProtobufHighlightStyleVariant,
+        new_tab_response, new_tab_unfocused_response, parse_layout_response,
+        plugin_command::Payload, rename_layout_response, save_layout_response,
+        save_session_response, show_floating_panes_response, BreakPanesToNewTabPayload,
         BreakPanesToNewTabResponse as ProtobufBreakPanesToNewTabResponse,
         BreakPanesToTabWithIdPayload,
         BreakPanesToTabWithIdResponse as ProtobufBreakPanesToTabWithIdResponse,
@@ -56,7 +56,9 @@ pub use super::generated_api::api::{
         GetSessionEnvironmentVariablesPayload as ProtobufGetSessionEnvironmentVariablesPayload,
         GetSessionEnvironmentVariablesResponse as ProtobufGetSessionEnvironmentVariablesResponse,
         GetSessionListPayload as ProtobufGetSessionListPayload,
-        GetSessionListResponse as ProtobufGetSessionListResponse, GetTabInfoPayload,
+        GetSessionListResponse as ProtobufGetSessionListResponse,
+        GetSessionPreviewPayload as ProtobufGetSessionPreviewPayload,
+        GetSessionPreviewResponse as ProtobufGetSessionPreviewResponse, GetTabInfoPayload,
         GetTabInfoResponse as ProtobufGetTabInfoResponse, GoToTabWithIdPayload,
         GroupAndUngroupPanesPayload, HideFloatingPanesPayload as ProtobufHideFloatingPanesPayload,
         HideFloatingPanesResponse as ProtobufHideFloatingPanesResponse, HidePaneWithIdPayload,
@@ -120,8 +122,9 @@ pub use super::generated_api::api::{
         SaveLayoutPayload, SaveLayoutResponse as ProtobufSaveLayoutResponse, SaveSessionPayload,
         SaveSessionResponse as ProtobufSaveSessionResponse, ScrollDownInPaneIdPayload,
         ScrollToBottomInPaneIdPayload, ScrollToTopInPaneIdPayload, ScrollUpInPaneIdPayload,
-        SessionListSnapshot as ProtobufSessionListSnapshot, SetFloatingPanePinnedPayload,
-        SetPaneBorderlessPayload, SetPaneColorPayload,
+        SessionListSnapshot as ProtobufSessionListSnapshot,
+        SessionPreview as ProtobufSessionPreview, SessionPreviewPane as ProtobufSessionPreviewPane,
+        SetFloatingPanePinnedPayload, SetPaneBorderlessPayload, SetPaneColorPayload,
         SetPaneFrameStylePayload as ProtobufSetPaneFrameStylePayload,
         SetPaneRegexHighlightsPayload, SetSelfMouseSelectionSupportPayload,
         SetSoftKeyboardPayload as ProtobufSetSoftKeyboardPayload, SetTimeoutPayload,
@@ -140,9 +143,10 @@ use crate::data::{
     ConnectToSession, DeleteAllDeadSessionsResponse, DeleteDeadSessionResponse,
     DeleteLayoutResponse, EditLayoutResponse, FloatingPaneCoordinates, GetFocusedPaneInfoResponse,
     GetPaneCwdResponse, GetPanePidResponse, GetPaneRunningCommandResponse, GetSessionListResponse,
-    HighlightLayer, HighlightStyle, HttpVerb, InputMode, KeyWithModifier, KillSessionsResponse,
-    MessageToPlugin, NewPluginArgs, PaneId, PermissionType, PluginCommand, RegexHighlight,
-    RenameLayoutResponse, SaveLayoutResponse, SessionInfo, SessionListSnapshot,
+    GetSessionPreviewResponse, HighlightLayer, HighlightStyle, HttpVerb, InputMode,
+    KeyWithModifier, KillSessionsResponse, MessageToPlugin, NewPluginArgs, PaneId, PermissionType,
+    PluginCommand, RegexHighlight, RenameLayoutResponse, SaveLayoutResponse, SessionInfo,
+    SessionListSnapshot, SessionPreview, SessionPreviewPane,
 };
 use crate::input::actions::Action;
 use crate::input::layout::PercentOrFixed;
@@ -398,6 +402,82 @@ impl TryFrom<ProtobufGetSessionListResponse> for GetSessionListResponse {
                 Ok(GetSessionListResponse::Err(err))
             },
             None => Err("Empty GetSessionListResponse"),
+        }
+    }
+}
+
+impl From<SessionPreviewPane> for ProtobufSessionPreviewPane {
+    fn from(pane: SessionPreviewPane) -> Self {
+        ProtobufSessionPreviewPane {
+            title: pane.title,
+            lines: pane.lines,
+        }
+    }
+}
+
+impl From<ProtobufSessionPreviewPane> for SessionPreviewPane {
+    fn from(pane: ProtobufSessionPreviewPane) -> Self {
+        SessionPreviewPane {
+            title: pane.title,
+            lines: pane.lines,
+        }
+    }
+}
+
+impl From<SessionPreview> for ProtobufSessionPreview {
+    fn from(preview: SessionPreview) -> Self {
+        ProtobufSessionPreview {
+            tab_name: preview.tab_name,
+            panes: preview
+                .panes
+                .into_iter()
+                .map(ProtobufSessionPreviewPane::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<ProtobufSessionPreview> for SessionPreview {
+    fn from(preview: ProtobufSessionPreview) -> Self {
+        SessionPreview {
+            tab_name: preview.tab_name,
+            panes: preview
+                .panes
+                .into_iter()
+                .map(SessionPreviewPane::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<GetSessionPreviewResponse> for ProtobufGetSessionPreviewResponse {
+    fn from(response: GetSessionPreviewResponse) -> Self {
+        match response {
+            GetSessionPreviewResponse::Ok(preview) => ProtobufGetSessionPreviewResponse {
+                result: Some(get_session_preview_response::Result::Preview(
+                    ProtobufSessionPreview::from(preview),
+                )),
+            },
+            GetSessionPreviewResponse::Err(err) => ProtobufGetSessionPreviewResponse {
+                result: Some(get_session_preview_response::Result::Error(err)),
+            },
+        }
+    }
+}
+
+impl TryFrom<ProtobufGetSessionPreviewResponse> for GetSessionPreviewResponse {
+    type Error = &'static str;
+    fn try_from(
+        protobuf_response: ProtobufGetSessionPreviewResponse,
+    ) -> Result<Self, &'static str> {
+        match protobuf_response.result {
+            Some(get_session_preview_response::Result::Preview(preview)) => {
+                Ok(GetSessionPreviewResponse::Ok(SessionPreview::from(preview)))
+            },
+            Some(get_session_preview_response::Result::Error(err)) => {
+                Ok(GetSessionPreviewResponse::Err(err))
+            },
+            None => Err("Empty GetSessionPreviewResponse"),
         }
     }
 }
@@ -1503,6 +1583,12 @@ impl TryFrom<ProtobufPluginCommand> for PluginCommand {
                 Some(Payload::GetSessionListPayload(_)) => Ok(PluginCommand::GetSessionList),
                 None => Ok(PluginCommand::GetSessionList),
                 _ => Err("Mismatched payload for GetSessionList"),
+            },
+            Some(CommandName::GetSessionPreview) => match protobuf_plugin_command.payload {
+                Some(Payload::GetSessionPreviewPayload(payload)) => {
+                    Ok(PluginCommand::GetSessionPreview(payload.session_name))
+                },
+                _ => Err("Mismatched payload for GetSessionPreview"),
             },
             Some(CommandName::KillSessionsAndReply) => match protobuf_plugin_command.payload {
                 Some(Payload::KillSessionsAndReplyPayload(KillSessionsPayload {
@@ -3451,6 +3537,12 @@ impl TryFrom<PluginCommand> for ProtobufPluginCommand {
                         tab_index: Some(idx as u32),
                     })
                 }),
+            }),
+            PluginCommand::GetSessionPreview(session_name) => Ok(ProtobufPluginCommand {
+                name: CommandName::GetSessionPreview as i32,
+                payload: Some(Payload::GetSessionPreviewPayload(
+                    ProtobufGetSessionPreviewPayload { session_name },
+                )),
             }),
             PluginCommand::CloseSelf => Ok(ProtobufPluginCommand {
                 name: CommandName::CloseSelf as i32,

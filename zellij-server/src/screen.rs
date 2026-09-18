@@ -44,7 +44,8 @@ use zellij_utils::data::{
     HostTerminalThemeMode, KeyWithModifier, LayoutInfo, LayoutWithError, ListPanesResponse,
     ListTabsResponse, NewPanePlacement, PaneContents, PaneInfo, PaneListEntry, PaneManifest,
     PaneRenderReport, PaneScrollbackResponse, PluginPermission, RegexHighlight, Resize,
-    ResizeStrategy, SessionInfo, Styling, TabInfo, ThemeHue, WebSharing,
+    ResizeStrategy, SessionInfo, SessionPreview, SessionPreviewPane, Styling, TabInfo, ThemeHue,
+    WebSharing,
 };
 use zellij_utils::errors::prelude::*;
 use zellij_utils::input::actions::Action;
@@ -421,6 +422,8 @@ pub enum ScreenInstruction {
         Option<ClientId>, // cli_client_id - used to send output to the CLI client's STDOUT
         bool,             // ansi - preserve ANSI styling in the dump output
     ),
+    /// Capture a textual snapshot of the active tab so other sessions can preview this one
+    GenerateSessionPreview,
     DumpLayout(Option<PathBuf>, ClientId, Option<NotificationEnd>), // PathBuf is the default configured
     // shell
     SaveSession(ClientId, Option<NotificationEnd>),
@@ -1035,6 +1038,7 @@ impl From<&ScreenInstruction> for ScreenContext {
             ScreenInstruction::Exit => ScreenContext::Exit,
             ScreenInstruction::ClearScreen(..) => ScreenContext::ClearScreen,
             ScreenInstruction::DumpScreen(..) => ScreenContext::DumpScreen,
+            ScreenInstruction::GenerateSessionPreview => ScreenContext::GenerateSessionPreview,
             ScreenInstruction::DumpLayout(..) => ScreenContext::DumpLayout,
             ScreenInstruction::SaveSession(..) => ScreenContext::SaveSession,
             ScreenInstruction::DumpLayoutToPlugin { .. } => ScreenContext::DumpLayoutToPlugin,
@@ -1683,6 +1687,10 @@ const STARTUP_SENTINEL_TOKEN: u32 = 0;
 /// relative to the 500 ms client-side deadline so a well-behaved new
 /// client always replies first; only the old-client and
 /// network-pathological cases ever see this fire.
+/// The maximum number of panes included in a session preview - previews are meant to give a
+/// quick impression of a session, not to reproduce it faithfully
+const MAX_SESSION_PREVIEW_PANES: usize = 6;
+
 const SERVER_FORWARD_TIMEOUT_MS: u64 = 1000;
 
 const SERVER_CLIPBOARD_FORWARD_TIMEOUT_MS: u64 = 35_000;
@@ -5402,6 +5410,69 @@ impl Screen {
         Ok(pane_manifest)
     }
 
+    /// Captures a textual snapshot of this session's active tab and hands it to the background
+    /// job thread, which writes it to the session info cache folder so that session managers
+    /// running in *other* sessions can show a preview of this one without attaching to it.
+    fn generate_and_report_session_preview(&mut self) {
+        let preview = self.generate_session_preview();
+        if let Err(e) = self
+            .bus
+            .senders
+            .send_to_background_jobs(BackgroundJob::ReportSessionPreview(preview))
+        {
+            log::error!("Failed to report session preview: {:?}", e);
+        }
+    }
+    fn generate_session_preview(&mut self) -> SessionPreview {
+        // we preview the tab of the first connected client (or the first tab if no client is
+        // connected) because that is the tab a user attaching to this session would land on
+        let active_tab_id = self
+            .active_tab_ids
+            .values()
+            .next()
+            .copied()
+            .or_else(|| self.tabs.keys().next().copied());
+        let Some(active_tab_id) = active_tab_id else {
+            return SessionPreview::default();
+        };
+        let (tab_name, panes_to_dump) = match self.get_tab_by_id(active_tab_id) {
+            Some(tab) => {
+                let panes_to_dump: Vec<(PaneId, String)> = tab
+                    .pane_infos()
+                    .into_iter()
+                    .filter(|pane_info| pane_info.is_selectable && !pane_info.is_suppressed)
+                    .take(MAX_SESSION_PREVIEW_PANES)
+                    .map(|pane_info| {
+                        let pane_id = if pane_info.is_plugin {
+                            PaneId::Plugin(pane_info.id)
+                        } else {
+                            PaneId::Terminal(pane_info.id)
+                        };
+                        (pane_id, pane_info.title)
+                    })
+                    .collect();
+                (tab.name.clone(), panes_to_dump)
+            },
+            None => return SessionPreview::default(),
+        };
+        let mut preview = SessionPreview {
+            tab_name,
+            panes: vec![],
+        };
+        let Some(tab) = self.get_tab_by_id_mut(active_tab_id) else {
+            return preview;
+        };
+        for (pane_id, title) in panes_to_dump {
+            // plugin panes are dumped per-client and so come back empty here - we still list
+            // them so that the preview reflects the actual layout of the tab
+            let lines = tab
+                .get_dump_terminal_screen(pane_id, false)
+                .map(|dump| trim_dumped_screen(&dump))
+                .unwrap_or_default();
+            preview.panes.push(SessionPreviewPane { title, lines });
+        }
+        preview
+    }
     fn collect_pane_list(&self, show_all: bool) -> Result<ListPanesResponse> {
         fn should_include_pane(pane_info: &PaneInfo, show_all: bool) -> bool {
             pane_info.is_selectable || show_all
@@ -9073,6 +9144,9 @@ pub(crate) fn screen_thread_main(
                         ))?;
                     },
                 }
+            },
+            ScreenInstruction::GenerateSessionPreview => {
+                screen.generate_and_report_session_preview();
             },
             ScreenInstruction::DumpLayout(default_shell, client_id, completion_tx) => {
                 let err_context = || format!("Failed to dump layout");
@@ -12854,3 +12928,17 @@ pub(crate) fn screen_thread_main(
 #[path = "./unit/screen_tests.rs"]
 #[cfg(test)]
 mod screen_tests;
+
+/// Turns a pane screen dump into preview lines: trailing whitespace is stripped from each line
+/// and trailing blank lines are dropped, so that an idle pane previews as a couple of lines
+/// rather than as a screenful of blanks.
+fn trim_dumped_screen(dump: &str) -> Vec<String> {
+    let mut lines: Vec<String> = dump
+        .lines()
+        .map(|line| line.trim_end().to_owned())
+        .collect();
+    while lines.last().map(|line| line.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    lines
+}

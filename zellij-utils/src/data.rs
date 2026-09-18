@@ -2666,6 +2666,93 @@ pub enum GetSessionListResponse {
     Err(String),
 }
 
+/// The contents of a single pane as captured for a session preview.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionPreviewPane {
+    /// The title of the pane as it appears in the UI
+    pub title: String,
+    /// The pane's viewport, one entry per line, with trailing blank lines removed
+    pub lines: Vec<String>,
+}
+
+/// A textual snapshot of a session's active tab, used to preview a session without attaching
+/// to it.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionPreview {
+    /// The name of the session's active tab
+    pub tab_name: String,
+    /// The panes of the active tab, in the order they appear in the layout
+    pub panes: Vec<SessionPreviewPane>,
+}
+
+/// The character starting a pane header line in the on-disk session preview cache file. It
+/// cannot appear in a pane's contents (terminal grids do not store control characters) and so
+/// is safe to use as a record separator.
+const SESSION_PREVIEW_PANE_MARKER: char = '\u{1}';
+
+impl SessionPreview {
+    /// Renders this preview into the plain-text format kept in the session info cache folder.
+    ///
+    /// The file is a list of panes, each introduced by a header line consisting of
+    /// [`SESSION_PREVIEW_PANE_MARKER`] followed by the pane title, and followed by the pane's
+    /// lines verbatim. The first line of the file is a header for the tab itself.
+    pub fn to_cache_file_contents(&self) -> String {
+        let sanitize = |text: &str| text.replace(SESSION_PREVIEW_PANE_MARKER, " ");
+        let mut contents = format!(
+            "{}{}\n",
+            SESSION_PREVIEW_PANE_MARKER,
+            sanitize(&self.tab_name)
+        );
+        for pane in &self.panes {
+            contents.push_str(&format!(
+                "{}{}\n",
+                SESSION_PREVIEW_PANE_MARKER,
+                sanitize(&pane.title)
+            ));
+            for line in &pane.lines {
+                contents.push_str(&sanitize(line));
+                contents.push('\n');
+            }
+        }
+        contents
+    }
+    /// Parses the format written by [`SessionPreview::to_cache_file_contents`].
+    pub fn from_cache_file_contents(contents: &str) -> Self {
+        let mut preview = SessionPreview::default();
+        let mut seen_tab_header = false;
+        for line in contents.lines() {
+            match line.strip_prefix(SESSION_PREVIEW_PANE_MARKER) {
+                Some(header) if !seen_tab_header => {
+                    preview.tab_name = header.to_owned();
+                    seen_tab_header = true;
+                },
+                Some(header) => {
+                    preview.panes.push(SessionPreviewPane {
+                        title: header.to_owned(),
+                        lines: vec![],
+                    });
+                },
+                None => {
+                    if let Some(current_pane) = preview.panes.last_mut() {
+                        current_pane.lines.push(line.to_owned());
+                    }
+                },
+            }
+        }
+        preview
+    }
+    /// True if none of this preview's panes have any content.
+    pub fn is_empty(&self) -> bool {
+        self.panes.iter().all(|pane| pane.lines.is_empty())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum GetSessionPreviewResponse {
+    Ok(SessionPreview),
+    Err(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum KillSessionsResponse {
     Ok,
@@ -3690,6 +3777,7 @@ pub enum PluginCommand {
     DeleteAllDeadSessionsAndReply,     // no payload; sends a response back
     SetSoftKeyboard(bool),
     FocusHostSession,
+    GetSessionPreview(String), // session name; sends a response back
 }
 
 // Response type for plugin API methods that open a pane in a new tab
@@ -3756,4 +3844,68 @@ pub fn can_parse_unicode_bare_keys() {
         Some(BareKey::Char('ъ')),
         "Can parse a bare 'ъ' keypress"
     );
+}
+
+#[test]
+pub fn session_preview_survives_a_cache_file_roundtrip() {
+    let preview = SessionPreview {
+        tab_name: "Tab #1".to_owned(),
+        panes: vec![
+            SessionPreviewPane {
+                title: "zsh".to_owned(),
+                lines: vec![
+                    "~/src $ cargo build".to_owned(),
+                    "   Compiling...".to_owned(),
+                ],
+            },
+            SessionPreviewPane {
+                title: "htop".to_owned(),
+                lines: vec![],
+            },
+        ],
+    };
+    assert_eq!(
+        SessionPreview::from_cache_file_contents(&preview.to_cache_file_contents()),
+        preview
+    );
+}
+
+#[test]
+pub fn session_preview_roundtrip_is_not_confused_by_pane_contents() {
+    // the marker we use to separate panes must not be taken from a pane's own contents
+    let preview = SessionPreview {
+        tab_name: "Tab \u{1}#1".to_owned(),
+        panes: vec![SessionPreviewPane {
+            title: "sh".to_owned(),
+            lines: vec!["a line with a \u{1} marker in it".to_owned()],
+        }],
+    };
+    let roundtripped = SessionPreview::from_cache_file_contents(&preview.to_cache_file_contents());
+    assert_eq!(roundtripped.tab_name, "Tab  #1");
+    assert_eq!(roundtripped.panes.len(), 1);
+    assert_eq!(roundtripped.panes[0].title, "sh");
+    assert_eq!(
+        roundtripped.panes[0].lines,
+        vec!["a line with a   marker in it".to_owned()]
+    );
+}
+
+#[test]
+pub fn an_empty_session_preview_is_reported_as_empty() {
+    let preview = SessionPreview {
+        tab_name: "Tab #1".to_owned(),
+        panes: vec![SessionPreviewPane {
+            title: "zsh".to_owned(),
+            lines: vec![],
+        }],
+    };
+    assert!(preview.is_empty());
+    let preview_with_contents = SessionPreview {
+        panes: vec![SessionPreviewPane {
+            title: "zsh".to_owned(),
+            lines: vec!["~ $".to_owned()],
+        }],
+        ..Default::default()
+    };
+    assert!(!preview_with_contents.is_empty());
 }

@@ -85,10 +85,10 @@ use zellij_utils::{
             ProtobufGetLayoutDirResponse, ProtobufGetPaneCwdResponse, ProtobufGetPaneInfoResponse,
             ProtobufGetPanePidResponse, ProtobufGetPaneRunningCommandResponse,
             ProtobufGetSessionEnvironmentVariablesResponse, ProtobufGetSessionListResponse,
-            ProtobufGetTabInfoResponse, ProtobufHideFloatingPanesResponse,
-            ProtobufKillSessionsResponse, ProtobufNewTabResponse, ProtobufNewTabUnfocusedResponse,
-            ProtobufNewTabsResponse, ProtobufNewTiledPaneInTabResponse,
-            ProtobufOpenCommandPaneBackgroundResponse,
+            ProtobufGetSessionPreviewResponse, ProtobufGetTabInfoResponse,
+            ProtobufHideFloatingPanesResponse, ProtobufKillSessionsResponse,
+            ProtobufNewTabResponse, ProtobufNewTabUnfocusedResponse, ProtobufNewTabsResponse,
+            ProtobufNewTiledPaneInTabResponse, ProtobufOpenCommandPaneBackgroundResponse,
             ProtobufOpenCommandPaneFloatingNearPluginResponse,
             ProtobufOpenCommandPaneFloatingResponse,
             ProtobufOpenCommandPaneInPlaceOfPaneIdResponse,
@@ -464,6 +464,9 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                     PluginCommand::WatchFilesystem => watch_filesystem(env),
                     PluginCommand::ListWindowsVolumes => list_windows_volumes(env),
                     PluginCommand::GetSessionList => get_session_list(env),
+                    PluginCommand::GetSessionPreview(session_name) => {
+                        get_session_preview(env, session_name)
+                    },
                     PluginCommand::SetSoftKeyboard(on) => set_soft_keyboard(env, on),
                     PluginCommand::DumpSessionLayout { tab_index } => {
                         dump_session_layout(env, tab_index)
@@ -4355,6 +4358,30 @@ fn get_session_list(env: &PluginEnv) {
         .non_fatal();
 }
 
+fn get_session_preview(env: &PluginEnv, session_name: String) {
+    use zellij_utils::consts::session_preview_cache_file_name;
+    use zellij_utils::data::{GetSessionPreviewResponse, SessionPreview};
+
+    let preview_file = session_preview_cache_file_name(&session_name);
+    let response = match std::fs::read_to_string(&preview_file) {
+        Ok(contents) => {
+            GetSessionPreviewResponse::Ok(SessionPreview::from_cache_file_contents(&contents))
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => GetSessionPreviewResponse::Err(
+            format!("No preview available for session: {}", session_name),
+        ),
+        Err(e) => GetSessionPreviewResponse::Err(format!(
+            "Failed to read preview for session {}: {}",
+            session_name, e
+        )),
+    };
+
+    let protobuf_response = ProtobufGetSessionPreviewResponse::from(response);
+    wasi_write_object(env, &protobuf_response.encode_to_vec())
+        .with_context(|| "failed to write get_session_preview response".to_string())
+        .non_fatal();
+}
+
 fn send_get_pane_running_command_request(
     env: &PluginEnv,
     pane_id: PaneId,
@@ -5595,7 +5622,8 @@ fn check_command_permission(
         | PluginCommand::CurrentSessionLastSavedTime
         | PluginCommand::GetPaneInfo(..)
         | PluginCommand::GetTabInfo(..)
-        | PluginCommand::GetSessionList => PermissionType::ReadApplicationState,
+        | PluginCommand::GetSessionList
+        | PluginCommand::GetSessionPreview(..) => PermissionType::ReadApplicationState,
         PluginCommand::RebindKeys { .. } | PluginCommand::Reconfigure(..) => {
             PermissionType::Reconfigure
         },

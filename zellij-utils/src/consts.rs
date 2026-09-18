@@ -33,6 +33,10 @@ pub fn session_layout_cache_file_name(session_name: &str) -> PathBuf {
     session_info_folder_for_session(session_name).join("session-layout.kdl")
 }
 
+pub fn session_preview_cache_file_name(session_name: &str) -> PathBuf {
+    session_info_folder_for_session(session_name).join("session-preview.txt")
+}
+
 pub fn session_info_folder_for_session(session_name: &str) -> PathBuf {
     ZELLIJ_SESSION_INFO_CACHE_DIR.join(session_name)
 }

@@ -1,10 +1,12 @@
 #[allow(unused_imports)] // some imports used only with web_server_capability feature
 use zellij_utils::consts::{
     session_info_cache_file_name, session_info_folder_for_session, session_layout_cache_file_name,
-    VERSION, ZELLIJ_SESSION_INFO_CACHE_DIR, ZELLIJ_SOCK_DIR,
+    session_preview_cache_file_name, VERSION, ZELLIJ_SESSION_INFO_CACHE_DIR, ZELLIJ_SOCK_DIR,
 };
 #[allow(unused_imports)]
-use zellij_utils::data::{Event, HttpVerb, LayoutInfo, SessionInfo, WebServerStatus};
+use zellij_utils::data::{
+    Event, HttpVerb, LayoutInfo, SessionInfo, SessionPreview, WebServerStatus,
+};
 use zellij_utils::errors::{prelude::*, BackgroundJobContext, ContextType};
 use zellij_utils::input::layout::RunPlugin;
 #[allow(unused_imports)]
@@ -40,10 +42,11 @@ use crate::{ClientId, ServerInstruction};
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum BackgroundJob {
     DisplayPaneError(Vec<PaneId>, String),
-    AnimatePluginLoading(u32),                            // u32 - plugin_id
-    StopPluginLoadingAnimation(u32),                      // u32 - plugin_id
-    ReportSessionInfo(String, SessionInfo),               // String - session name
-    ReportPluginList(BTreeMap<PluginId, RunPlugin>),      // String - session name
+    AnimatePluginLoading(u32),              // u32 - plugin_id
+    StopPluginLoadingAnimation(u32),        // u32 - plugin_id
+    ReportSessionInfo(String, SessionInfo), // String - session name
+    ReportSessionPreview(SessionPreview),
+    ReportPluginList(BTreeMap<PluginId, RunPlugin>), // String - session name
     ReportLayoutInfo((String, BTreeMap<String, String>)), // BTreeMap<file_name, pane_contents>
     RunCommand(
         PluginId,
@@ -90,6 +93,7 @@ impl From<&BackgroundJob> for BackgroundJobContext {
                 BackgroundJobContext::StopPluginLoadingAnimation
             },
             BackgroundJob::ReportSessionInfo(..) => BackgroundJobContext::ReportSessionInfo,
+            BackgroundJob::ReportSessionPreview(..) => BackgroundJobContext::ReportSessionPreview,
             BackgroundJob::ReportLayoutInfo(..) => BackgroundJobContext::ReportLayoutInfo,
             BackgroundJob::RunCommand(..) => BackgroundJobContext::RunCommand,
             BackgroundJob::WebRequest(..) => BackgroundJobContext::WebRequest,
@@ -154,6 +158,7 @@ pub(crate) fn background_jobs_main(
     let current_session_plugin_list: Arc<Mutex<BTreeMap<PluginId, RunPlugin>>> =
         Arc::new(Mutex::new(BTreeMap::new()));
     let current_session_layout = Arc::new(Mutex::new((String::new(), BTreeMap::new())));
+    let current_session_preview = Arc::new(Mutex::new(SessionPreview::default()));
 
     let _ = SESSION_SCAN_STATE.set(SessionScanState {
         current_session_name: current_session_name.clone(),
@@ -212,6 +217,8 @@ pub(crate) fn background_jobs_main(
         let current_session_name = current_session_name.clone();
         let current_session_info = current_session_info.clone();
         let current_session_layout = current_session_layout.clone();
+        let current_session_preview = current_session_preview.clone();
+        let senders = bus.senders.clone();
         runtime.spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_millis(
                 SESSION_METADATA_WRITE_INTERVAL_MS,
@@ -225,7 +232,13 @@ pub(crate) fn background_jobs_main(
                 }
                 let info = current_session_info.lock().unwrap().clone();
                 let layout = current_session_layout.lock().unwrap().clone();
-                write_session_state_to_disk(name, info, layout);
+                let preview = current_session_preview.lock().unwrap().clone();
+                write_session_state_to_disk(name.clone(), info, layout);
+                write_session_preview_to_disk(name, preview);
+                // ask the screen thread for a fresh preview to write on the next tick - we do
+                // this here rather than whenever session state changes because pane contents
+                // change without the session state changing at all
+                let _ = senders.send_to_screen(ScreenInstruction::GenerateSessionPreview);
             }
         });
     }
@@ -288,6 +301,9 @@ pub(crate) fn background_jobs_main(
             BackgroundJob::ReportSessionInfo(session_name, session_info) => {
                 *current_session_name.lock().unwrap() = session_name;
                 *current_session_info.lock().unwrap() = session_info;
+            },
+            BackgroundJob::ReportSessionPreview(session_preview) => {
+                *current_session_preview.lock().unwrap() = session_preview;
             },
             BackgroundJob::ReportPluginList(plugin_list) => {
                 *current_session_plugin_list.lock().unwrap() = plugin_list;
@@ -719,9 +735,9 @@ pub(crate) fn background_jobs_main(
                     nested_guest_ping.store(false, Ordering::SeqCst);
                 }
 
-                let cache_file_name =
-                    session_info_cache_file_name(&current_session_name.lock().unwrap().to_owned());
-                let _ = std::fs::remove_file(cache_file_name);
+                let session_name = current_session_name.lock().unwrap().to_owned();
+                let _ = std::fs::remove_file(session_info_cache_file_name(&session_name));
+                let _ = std::fs::remove_file(session_preview_cache_file_name(&session_name));
                 return Ok(());
             },
         }
@@ -793,6 +809,21 @@ pub fn write_session_state_to_disk(
                     });
             }
         }
+    }
+}
+
+pub fn write_session_preview_to_disk(
+    current_session_name: String,
+    current_session_preview: SessionPreview,
+) {
+    let preview_cache_file_name = session_preview_cache_file_name(&current_session_name);
+    let new_preview = current_session_preview.to_cache_file_contents();
+    if file_content_changed(&preview_cache_file_name, new_preview.as_bytes()) {
+        let _wrote_preview_file = std::fs::create_dir_all(
+            session_info_folder_for_session(&current_session_name).as_path(),
+        )
+        .and_then(|_| std::fs::File::create(&preview_cache_file_name))
+        .and_then(|mut f| write!(f, "{}", new_preview));
     }
 }
 

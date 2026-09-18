@@ -15,7 +15,7 @@ use zellij_utils::plugin_api::generated_api::api::plugin_command::{
 use zellij_utils::plugin_api::plugin_command::{
     dump_layout_response, dump_session_layout_response, get_focused_pane_info_response,
     get_pane_cwd_response, get_pane_running_command_response, get_session_list_response,
-    parse_layout_response, CreateTokenResponse, ListTokensResponse,
+    get_session_preview_response, parse_layout_response, CreateTokenResponse, ListTokensResponse,
     ProtobufBreakPanesToNewTabResponse, ProtobufBreakPanesToTabWithIdResponse,
     ProtobufBreakPanesToTabWithIndexResponse, ProtobufCurrentSessionLastSavedTimeResponse,
     ProtobufDeleteAllDeadSessionsResponse, ProtobufDeleteDeadSessionResponse,
@@ -25,23 +25,24 @@ use zellij_utils::plugin_api::plugin_command::{
     ProtobufGetLayoutDirResponse, ProtobufGetPaneCwdResponse, ProtobufGetPaneInfoResponse,
     ProtobufGetPanePidResponse, ProtobufGetPaneRunningCommandResponse,
     ProtobufGetSessionEnvironmentVariablesResponse, ProtobufGetSessionListResponse,
-    ProtobufGetTabInfoResponse, ProtobufHideFloatingPanesResponse, ProtobufKillSessionsResponse,
-    ProtobufNewTabResponse, ProtobufNewTabUnfocusedResponse, ProtobufNewTabsResponse,
-    ProtobufNewTiledPaneInTabResponse, ProtobufOpenCommandPaneBackgroundResponse,
-    ProtobufOpenCommandPaneFloatingNearPluginResponse, ProtobufOpenCommandPaneFloatingResponse,
-    ProtobufOpenCommandPaneInPlaceOfPaneIdResponse, ProtobufOpenCommandPaneInPlaceOfPluginResponse,
-    ProtobufOpenCommandPaneInPlaceResponse, ProtobufOpenCommandPaneNearPluginResponse,
-    ProtobufOpenCommandPaneResponse, ProtobufOpenEditPaneInPlaceOfPaneIdResponse,
-    ProtobufOpenFileFloatingNearPluginResponse, ProtobufOpenFileFloatingResponse,
-    ProtobufOpenFileInPlaceOfPluginResponse, ProtobufOpenFileInPlaceResponse,
-    ProtobufOpenFileNearPluginResponse, ProtobufOpenFileResponse, ProtobufOpenPaneInNewTabResponse,
-    ProtobufOpenPluginPaneFloatingResponse, ProtobufOpenTerminalFloatingNearPluginResponse,
-    ProtobufOpenTerminalFloatingResponse, ProtobufOpenTerminalInPlaceOfPluginResponse,
-    ProtobufOpenTerminalInPlaceResponse, ProtobufOpenTerminalNearPluginResponse,
-    ProtobufOpenTerminalPaneInPlaceOfPaneIdResponse, ProtobufOpenTerminalResponse,
-    ProtobufParseLayoutResponse, ProtobufPluginCommand, ProtobufRenameLayoutResponse,
-    ProtobufSaveLayoutResponse, ProtobufSaveSessionResponse, ProtobufShowFloatingPanesResponse,
-    RenameWebTokenResponse, RevokeAllWebTokensResponse, RevokeTokenResponse,
+    ProtobufGetSessionPreviewResponse, ProtobufGetTabInfoResponse,
+    ProtobufHideFloatingPanesResponse, ProtobufKillSessionsResponse, ProtobufNewTabResponse,
+    ProtobufNewTabUnfocusedResponse, ProtobufNewTabsResponse, ProtobufNewTiledPaneInTabResponse,
+    ProtobufOpenCommandPaneBackgroundResponse, ProtobufOpenCommandPaneFloatingNearPluginResponse,
+    ProtobufOpenCommandPaneFloatingResponse, ProtobufOpenCommandPaneInPlaceOfPaneIdResponse,
+    ProtobufOpenCommandPaneInPlaceOfPluginResponse, ProtobufOpenCommandPaneInPlaceResponse,
+    ProtobufOpenCommandPaneNearPluginResponse, ProtobufOpenCommandPaneResponse,
+    ProtobufOpenEditPaneInPlaceOfPaneIdResponse, ProtobufOpenFileFloatingNearPluginResponse,
+    ProtobufOpenFileFloatingResponse, ProtobufOpenFileInPlaceOfPluginResponse,
+    ProtobufOpenFileInPlaceResponse, ProtobufOpenFileNearPluginResponse, ProtobufOpenFileResponse,
+    ProtobufOpenPaneInNewTabResponse, ProtobufOpenPluginPaneFloatingResponse,
+    ProtobufOpenTerminalFloatingNearPluginResponse, ProtobufOpenTerminalFloatingResponse,
+    ProtobufOpenTerminalInPlaceOfPluginResponse, ProtobufOpenTerminalInPlaceResponse,
+    ProtobufOpenTerminalNearPluginResponse, ProtobufOpenTerminalPaneInPlaceOfPaneIdResponse,
+    ProtobufOpenTerminalResponse, ProtobufParseLayoutResponse, ProtobufPluginCommand,
+    ProtobufRenameLayoutResponse, ProtobufSaveLayoutResponse, ProtobufSaveSessionResponse,
+    ProtobufShowFloatingPanesResponse, RenameWebTokenResponse, RevokeAllWebTokensResponse,
+    RevokeTokenResponse,
 };
 use zellij_utils::plugin_api::plugin_ids::{ProtobufPluginIds, ProtobufZellijVersion};
 
@@ -2056,6 +2057,35 @@ pub fn get_session_list() -> Result<SessionListSnapshot, String> {
             })
         },
         Some(get_session_list_response::Result::Error(err)) => Err(err),
+        None => Err("Empty response from server".to_string()),
+    }
+}
+
+/// Fetches a textual preview of another session's active tab.
+///
+/// The preview is refreshed by each running session roughly once per second and cached on
+/// disk, so it lags behind the live session by up to that long. Sessions started with session
+/// metadata disabled do not publish a preview and return an error here.
+///
+/// # Arguments
+/// * `session_name` - The name of the session to preview
+///
+/// # Permissions Required
+/// * `ReadApplicationState`
+pub fn get_session_preview(session_name: &str) -> Result<SessionPreview, String> {
+    let plugin_command = PluginCommand::GetSessionPreview(session_name.to_owned());
+    let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();
+    object_to_stdout(&protobuf_plugin_command.encode_to_vec());
+    unsafe { host_run_plugin_command() };
+
+    let protobuf_response =
+        ProtobufGetSessionPreviewResponse::decode(bytes_from_stdin().unwrap().as_slice()).unwrap();
+
+    match protobuf_response.result {
+        Some(get_session_preview_response::Result::Preview(preview)) => {
+            Ok(SessionPreview::from(preview))
+        },
+        Some(get_session_preview_response::Result::Error(err)) => Err(err),
         None => Err("Empty response from server".to_string()),
     }
 }
