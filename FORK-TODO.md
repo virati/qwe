@@ -20,6 +20,14 @@ GitHub issues are off on this repo, so the list lives here.
       directories, and the `session-preview.txt` capture from item 1.
    2. Rank sessions, show the top few with why each matched, attach on
       confirm (attach straight away only when one match is clearly ahead).
-   3. Open question: plain text matching first, or send the session
-      summaries to an LLM for ranking (needs a key and sends screen
-      contents off the machine, so it should be opt-in).
+   3. Ranking is done by an LLM through **pi**, the way `virati/e_harness`
+      does it: headless, no pi TUI, no tools (it only reads the summaries it
+      is handed, so text on someone's screen has nothing to act on), and a
+      small fast model by default (`claude-haiku-4-5`, overridable like
+      `EH_FAST_MODEL`). e_harness drives pi through its Node SDK
+      (`createAgentSession` in `src/agent.mjs`); from Rust the simpler route
+      is to shell out to `pi -p --no-tools --no-session --mode json --model
+      ...` with the session summaries in the prompt and ask for ranked
+      session names plus a one-line reason each.
+   4. Off by default, since it sends screen contents to the model provider;
+      if `pi` is missing or fails, fall back to plain text matching and say so.
